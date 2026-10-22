@@ -1,0 +1,39 @@
+# Practice config: public pedestrian video (OpenCV vtest.avi, 768x576) treated as a live camera,
+# plus one unreachable RTSP camera to demonstrate reconnect + source-health reporting.
+sources:
+  - id: cam01
+    uri: data/vtest.avi       # webcam: "0"; IP camera: rtsp://user:pass@host:554/stream
+    loop: true                # replay file forever (practice only)
+    realtime: true            # pace file at native FPS like a real camera
+    zones:
+      - id: restricted_a      # illustrative zone, pixel coordinates of the frame
+        polygon: [[380, 215], [560, 215], [580, 330], [360, 330]]  # stretch of the walkway
+        min_dwell_s: 1.0      # must stay inside this long before an event
+        lost_timeout_s: 2.0   # outside/unseen this long = left the zone
+        classes: [person]
+  - id: cam02_offline
+    uri: rtsp://127.0.0.1:8554/not-running
+
+model:
+  weights: yolov8n.pt         # auto-downloaded on first run; copy it in for offline sites
+  classes: [0]                # COCO 0 = person
+  conf: 0.35
+  imgsz: 640
+  device: null                # null = auto (CUDA if available), or "cpu" / 0
+
+stream:
+  buffer_size: 4              # frames; oldest dropped when inference is slower than the camera
+  reconnect_initial_s: 1.0
+  reconnect_max_s: 30.0       # exponential backoff cap
+  stale_after_s: 3.0          # no frame for this long => source unhealthy
+  offline_grace_s: 10.0       # source that never delivered a frame => source_offline after this long
+
+events:
+  dir: output                 # events.jsonl, metrics.json, evidence/*.jpg + *.mp4
+  clip: true                  # save a video clip around each event
+  clip_pre_s: 5.0             # seconds before the event (ring buffer)
+  clip_post_s: 5.0            # seconds after the event
+
+api:
+  host: 127.0.0.1
+  port: 8080
