@@ -1,0 +1,16 @@
+# environments and caches
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+
+# run outputs
+output/
+*.log
+!docs/sample-run/*.log
+
+# large assets, fetched with scripts/download_assets.py
+*.pt
+data/*.avi
+data/*.mp4
