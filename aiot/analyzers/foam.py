@@ -32,10 +32,14 @@ class FoamCoverage(Analyzer):
 
     def __init__(self, roi: Optional[Sequence[Sequence[float]]] = None, warp_size: Sequence[int] = (320, 240),
                  colors: Sequence = ("white",), brighter_than_water: float = 40.0, kernel_px: int = 5,
-                 smooth_alpha: float = 0.3):
+                 smooth_alpha: float = 0.3, reset_after_s: float = 10.0):
         if roi is not None and len(roi) != 4:
-            raise ValueError("foam_coverage.roi needs exactly 4 corner points (clockwise from top-left)")
-        self.roi = np.array(roi, dtype=np.float32) if roi is not None else None
+            raise ValueError("foam_coverage.roi needs exactly 4 corner points")
+        if not 0 < smooth_alpha <= 1:
+            raise ValueError("foam_coverage.smooth_alpha must be in (0, 1]")
+        self.roi = _order_corners(roi) if roi is not None else None
+        self.reset_after_s = float(reset_after_s)  # gap longer than this: restart smoothing from the new value
+        self._last_t: Optional[float] = None
         self.warp_size = (int(warp_size[0]), int(warp_size[1]))
         self.ranges = [_hsv_range(c) for c in colors]
         self.brighter_than_water = float(brighter_than_water)
@@ -67,7 +71,12 @@ class FoamCoverage(Analyzer):
         for lo, hi in self.ranges:
             m |= cv2.inRange(hsv, lo, hi)
         if self.water_v is not None:
-            m |= ((hsv[:, :, 2].astype(np.float32) - self.water_v) >= self.brighter_than_water).astype(np.uint8) * 255
+            above = hsv[:, :, 2].astype(np.float32) - self.water_v
+            # calibrated: a colour match must also be somewhat brighter than the clean water
+            # (bright sky reflections on clean water are not foam) ...
+            m &= (above >= self.brighter_than_water / 2).astype(np.uint8) * 255
+            # ... and anything clearly brighter than the water counts, whatever its colour (grey foam)
+            m |= (above >= self.brighter_than_water).astype(np.uint8) * 255
         if self.kernel is not None:
             m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self.kernel)
             m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.kernel)
@@ -82,7 +91,9 @@ class FoamCoverage(Analyzer):
     def process(self, frame: np.ndarray, t: float) -> AnalyzerResult:
         raw = self.coverage(frame)
         a = self.smooth_alpha
-        self.value = raw if self.value is None else a * raw + (1 - a) * self.value
+        stale = self._last_t is None or t - self._last_t > self.reset_after_s
+        self.value = raw if self.value is None or stale else a * raw + (1 - a) * self.value
+        self._last_t = t
         return AnalyzerResult(measurement={
             "status": "ok",
             "foam_coverage_pct": round(self.value, 1),
@@ -105,4 +116,18 @@ def _hsv_range(c) -> tuple[np.ndarray, np.ndarray]:
         lo, hi = PRESETS[c]
     else:
         lo, hi = c["lo"], c["hi"]
+    limits = (179, 255, 255)
+    if len(lo) != 3 or len(hi) != 3 or any(not 0 <= x <= m for v in (lo, hi) for x, m in zip(v, limits, strict=True)) \
+            or any(a > b for a, b in zip(lo, hi, strict=True)):
+        raise ValueError(f"bad HSV range {c!r}: need lo <= hi, H 0-179, S/V 0-255 (no hue wrap-around)")
     return np.array(lo, np.uint8), np.array(hi, np.uint8)
+
+
+def _order_corners(pts) -> np.ndarray:
+    """Return the 4 points as top-left, top-right, bottom-right, bottom-left, whatever order they came in."""
+    p = np.array(pts, dtype=np.float32)
+    s, d = p.sum(axis=1), np.diff(p, axis=1).ravel()  # x+y, y-x
+    out = np.array([p[np.argmin(s)], p[np.argmin(d)], p[np.argmax(s)], p[np.argmax(d)]], dtype=np.float32)
+    if len({tuple(q) for q in out.tolist()}) != 4:
+        raise ValueError("foam_coverage.roi corners are degenerate (need a proper quadrilateral)")
+    return out

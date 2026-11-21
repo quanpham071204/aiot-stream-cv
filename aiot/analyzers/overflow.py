@@ -79,15 +79,24 @@ class Overflow(Analyzer):
             if self.ratio < self.off_ratio:
                 self.active, self._streak = False, 0
         else:
-            self._streak = self._streak + 1 if self.ratio >= self.on_ratio else 0
+            if self.ratio >= self.on_ratio:
+                self._streak += 1
+            elif self.ratio < self.off_ratio:
+                self._streak = 0
+            # between off_ratio and on_ratio: keep the count (hysteresis band), so a rippling
+            # spill that flickers around on_ratio is still confirmed
             if self._streak >= self.confirm_frames:
-                self.active = True
                 if self._last_fired is None or t - self._last_fired >= self.cooldown_s:
+                    self.active = True
                     self._last_fired = t
                     events.append({"zone_id": self.zone_id, "changed_ratio": round(self.ratio, 3),
                                    "on_ratio": self.on_ratio})
+                # else: still cooling down -> stay pending and alert as soon as the cooldown ends,
+                # instead of going silently "active" and losing this spill for good
             elif self.ratio < self.off_ratio:
-                cv2.accumulateWeighted(g, self.reference, self.adapt_rate)
+                # quiet zone: follow slow lighting drift, but only on unchanged pixels so a spill
+                # that creeps in slowly is not absorbed into the reference
+                cv2.accumulateWeighted(g, self.reference, self.adapt_rate, mask=(~changed).astype(np.uint8))
         return AnalyzerResult(
             measurement={"status": "ok", "zone_id": self.zone_id, "active": self.active,
                          "changed_ratio": round(self.ratio, 3)},

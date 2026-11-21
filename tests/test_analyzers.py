@@ -179,3 +179,14 @@ def test_pipeline_runs_analyzers_and_isolates_failures():
     assert meas["foam_coverage"]["foam_coverage_pct"] == 100
     assert events == [("overflow", {"zone_id": "z"})]
     assert p.analyzer_errors["boom"] == 1
+
+
+def test_overflow_slow_creeping_spill_is_not_absorbed_into_reference():
+    """Regression (Argon #3): quiet-zone adaptation must skip pixels that already changed."""
+    ov = Overflow(ROI, learn_frames=1, confirm_frames=3, on_ratio=0.15, off_ratio=0.05, adapt_rate=0.2)
+    feed(ov, frame(), 0)
+    events, f = [], frame()
+    for i in range(200):                      # wet patch grows by one column every 2 frames
+        f[:60, : i // 2] = WHITE
+        events += ov.process(f.copy(), 1 + 0.1 * i).events
+    assert len(events) == 1
