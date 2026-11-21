@@ -60,7 +60,9 @@ class Overflow(Analyzer):
         if self._mask is None or self._mask.shape != g.shape:
             self._mask = np.zeros(g.shape, np.uint8)
             cv2.fillPoly(self._mask, [self.polygon], 1)
+            # new geometry: forget the old reference AND any half-confirmed / active alarm
             self._learn, self.reference = [], None
+            self.active, self._streak, self.ratio = False, 0, 0.0
         if self.reference is None:
             self._learn.append(g)
             if len(self._learn) >= self.learn_frames:
