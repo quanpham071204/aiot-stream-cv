@@ -257,3 +257,15 @@ def test_calibrate_bad_inputs_fail_loudly(tmp_path):
 def test_calibrate_option_reaches_analyzer_via_config():
     (fc,) = build_analyzers({"foam_coverage": {"calibrate": "first_frames", "calibrate_frames": 2}})
     assert fc.process(frame(), 0.0).measurement["status"] == "calibrating"
+
+
+def test_darker_than_local_drops_brown_water_cells_between_brown_foam():
+    f = frame((150, 190, 225))                 # light tan foam everywhere ...
+    f[45:75, 60:100] = (110, 150, 185)         # ... with a darker brown-water cell that still matches "brown"
+    plain = FoamCoverage(colors=["brown"], kernel_px=1)
+    local = FoamCoverage(colors=["brown"], kernel_px=1, darker_than_local=10)
+    assert plain.coverage(f) > 95
+    assert local.coverage(f) == pytest.approx(93.75, abs=2)       # 30x40 cell = 6.25 % of the 120x160 frame
+    assert local.coverage(frame((150, 190, 225))) > 95            # uniform foam is untouched
+    with pytest.raises(ValueError):
+        FoamCoverage(darker_than_local=-1)

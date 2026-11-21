@@ -39,6 +39,7 @@ def main() -> None:
     ap.add_argument("--out", default="foam_sheet.jpg")
     ap.add_argument("--colors", nargs="+", default=["white"])
     ap.add_argument("--rois", help="JSON: {image_name: {roi: [[fx, fy] x4], ref_pct: float}}")
+    ap.add_argument("--darker-than-local", type=float, default=None, help="foam_coverage.darker_than_local")
     args = ap.parse_args()
 
     rois = json.loads(Path(args.rois).read_text(encoding="utf-8")) if args.rois else {}
@@ -54,7 +55,7 @@ def main() -> None:
             spec = rois.get(p.name, {})
             h, w = img.shape[:2]
             roi = [[fx * (w - 1), fy * (h - 1)] for fx, fy in spec["roi"]] if "roi" in spec else None
-            fc = FoamCoverage(roi=roi, colors=args.colors, warp_size=TILE)
+            fc = FoamCoverage(roi=roi, colors=args.colors, warp_size=TILE, darker_than_local=args.darker_than_local)
             pct = fc.coverage(img)
             ref = spec.get("ref_pct")
             surf = fc.surface(img)

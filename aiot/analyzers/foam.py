@@ -10,6 +10,11 @@
    ``calibrate_frames`` frames after start (start the camera on a calm, foam-free
    tank); ``calibrate: <path to image>`` uses a photo of the clean tank taken by the
    same camera at the same resolution.
+   Optionally (``darker_than_local``) a colour match is dropped when it is clearly darker
+   than its neighbourhood: foam is always the bright part of the surface, so brown
+   water cells between brown foam, or grey water between white foam, are not foam.
+   Water patches wider than the comparison window (``local_window_frac`` of the
+   surface width) are not caught, and a scene that is all water stays as measured.
 3. Morphological open/close removes speckle and fills foam patches.
 4. Coverage = foam pixels / ROI pixels, smoothed with an exponential moving average.
 
@@ -44,7 +49,8 @@ class FoamCoverage(Analyzer):
     def __init__(self, roi: Optional[Sequence[Sequence[float]]] = None, warp_size: Sequence[int] = (320, 240),
                  colors: Sequence = ("white",), brighter_than_water: float = 40.0, kernel_px: int = 5,
                  smooth_alpha: float = 0.3, reset_after_s: float = 10.0, calibrate: Optional[str] = None,
-                 calibrate_frames: int = 10):
+                 calibrate_frames: int = 10, darker_than_local: Optional[float] = None,
+                 local_window_frac: float = 0.25):
         if roi is not None and len(roi) != 4:
             raise ValueError("foam_coverage.roi needs exactly 4 corner points")
         if not 0 < smooth_alpha <= 1:
@@ -57,6 +63,13 @@ class FoamCoverage(Analyzer):
         self.brighter_than_water = float(brighter_than_water)
         self.kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_px, kernel_px)) if kernel_px > 1 else None
         self.smooth_alpha = float(smooth_alpha)
+        if darker_than_local is not None and darker_than_local < 0:
+            raise ValueError("foam_coverage.darker_than_local must be >= 0 (or omitted to turn it off)")
+        if not 0 < local_window_frac <= 1:
+            raise ValueError("foam_coverage.local_window_frac must be in (0, 1]")
+        self.darker_than_local = darker_than_local
+        w = max(3, int(round(self.warp_size[0] * local_window_frac)) | 1)  # odd box size, ~1/4 of the surface width
+        self.local_window = (w, w)
         self.water_v: Optional[float] = None
         self.value: Optional[float] = None
         self.last_mask: Optional[np.ndarray] = None
@@ -112,6 +125,13 @@ class FoamCoverage(Analyzer):
         if self.kernel is not None:
             m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self.kernel)
             m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.kernel)
+        if self.darker_than_local is not None:
+            # after the clean-up, so the open step does not erase what this leaves of thin foam lines;
+            # a final close re-joins foam split by small dark bubble gaps
+            v = hsv[:, :, 2].astype(np.float32)
+            m &= (v >= cv2.blur(v, self.local_window) - self.darker_than_local).astype(np.uint8) * 255
+            if self.kernel is not None:
+                m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.kernel)
         return m
 
     def coverage(self, frame: np.ndarray) -> float:

@@ -13,6 +13,8 @@ sources:
         calibrate: first_frames     # learn the water brightness from the first frames (start on a calm, foam-free tank);
                                     # or a path to a clean-tank photo from this camera; remove to turn off
         calibrate_frames: 10
+        darker_than_local: 10        # drop colour matches >10 levels darker than their surroundings (brown/grey water
+                                    # between foam); remove to turn off
         kernel_px: 5                # speckle filter; use 3 when the camera is far and foam lines are thin
       overflow:
         enabled: true
