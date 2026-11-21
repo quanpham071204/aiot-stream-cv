@@ -8,7 +8,7 @@ sources:
       foam_coverage:
         enabled: true
         roi: [[120, 80], [520, 80], [560, 400], [80, 400]]   # tank surface corners, clockwise from top-left
-        colors: [white, brown]  # HSV presets in aiot/analyzers/foam.py
+        colors: [white, brown, grey, shadow]  # HSV presets in aiot/analyzers/foam.py; grey/shadow need a tight ROI
         smooth_alpha: 0.3
       overflow:
         enabled: true

@@ -190,3 +190,27 @@ def test_overflow_slow_creeping_spill_is_not_absorbed_into_reference():
         f[:60, : i // 2] = WHITE
         events += ov.process(f.copy(), 1 + 0.1 * i).events
     assert len(events) == 1
+
+
+# --- ROI corner order / overcast & shade presets (found on the advisor's photos with a tank ROI) --------------------
+def test_skewed_perspective_roi_is_ordered_not_rejected():
+    """x+y / y-x picked the same corner twice for this shape (sh-bot-trang-04: far edge short, near edge wide)."""
+    quad = [[0, 39], [53, 37], [159, 119], [0, 119]]
+    fc = FoamCoverage(roi=[quad[2], quad[0], quad[3], quad[1]], kernel_px=1)   # shuffled
+    assert fc.roi.tolist() == [[0, 39], [53, 37], [159, 119], [0, 119]]
+    with pytest.raises(ValueError):                                          # bow-tie is not a quad
+        FoamCoverage(roi=[[0, 0], [100, 0], [0, 100], [50, 10]])
+
+
+def test_grey_preset_catches_overcast_foam_but_not_dark_water():
+    f = frame((70, 75, 80))                     # dark grey water
+    f[:60] = (140, 145, 148)                    # dull grey-white foam, V ~ 148 < white's 165
+    assert FoamCoverage(colors=["white"], kernel_px=1).coverage(f) < 5
+    assert FoamCoverage(colors=["white", "grey"], kernel_px=1).coverage(f) == pytest.approx(50, abs=1)
+
+
+def test_shadow_preset_catches_blue_tinted_foam():
+    f = frame(WATER)
+    f[:60] = (225, 190, 160)                    # foam in shade, bluish (S ~ 74 > white's 60)
+    assert FoamCoverage(colors=["white"], kernel_px=1).coverage(f) < 5
+    assert FoamCoverage(colors=["white", "shadow"], kernel_px=1).coverage(f) == pytest.approx(50, abs=1)

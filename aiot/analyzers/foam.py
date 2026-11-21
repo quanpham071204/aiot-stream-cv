@@ -20,10 +20,15 @@ import numpy as np
 from ..timeutil import iso
 from . import Analyzer, AnalyzerResult
 
-# OpenCV HSV: H 0-179, S 0-255, V 0-255. Tuned on the advisor's reference photos (see scripts/foam_eval.py).
+# OpenCV HSV: H 0-179, S 0-255, V 0-255. Tuned on the advisor's 29 reference photos with a
+# tank ROI each (scripts/foam_eval.py --rois scripts/foam_rois.json).
+# "grey" and "shadow" catch foam under overcast sky / in shade; they also match grey concrete
+# and bright grey water, so use them only with a tight tank-surface ROI.
 PRESETS: dict[str, tuple[tuple[int, int, int], tuple[int, int, int]]] = {
     "white": ((0, 0, 165), (179, 60, 255)),     # bright, nearly colourless
-    "brown": ((5, 40, 135), (30, 160, 255)),    # tan / beige foam, lighter than brown water
+    "brown": ((5, 40, 135), (30, 200, 255)),    # tan / beige / golden foam, lighter than brown water
+    "grey": ((0, 0, 115), (179, 30, 255)),      # dull grey-white foam (overcast light)
+    "shadow": ((95, 0, 150), (125, 110, 255)),  # white foam tinted blue by shade / sky
 }
 
 
@@ -124,10 +129,16 @@ def _hsv_range(c) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _order_corners(pts) -> np.ndarray:
-    """Return the 4 points as top-left, top-right, bottom-right, bottom-left, whatever order they came in."""
+    """Return the 4 points as top-left, top-right, bottom-right, bottom-left, whatever order they came in.
+
+    Sorted by angle around the centroid (clockwise on screen), then rotated so the corner
+    nearest the image origin comes first. Works for skewed / perspective quads where a
+    plain x+y / y-x rule picks the same point twice.
+    """
     p = np.array(pts, dtype=np.float32)
-    s, d = p.sum(axis=1), np.diff(p, axis=1).ravel()  # x+y, y-x
-    out = np.array([p[np.argmin(s)], p[np.argmin(d)], p[np.argmax(s)], p[np.argmax(d)]], dtype=np.float32)
-    if len({tuple(q) for q in out.tolist()}) != 4:
-        raise ValueError("foam_coverage.roi corners are degenerate (need a proper quadrilateral)")
-    return out
+    c = p.mean(axis=0)
+    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
+    p = np.roll(p, -int(np.argmin(p.sum(axis=1))), axis=0)
+    if len({tuple(q) for q in p.tolist()}) != 4 or cv2.contourArea(p) < 1 or not cv2.isContourConvex(p):
+        raise ValueError("foam_coverage.roi corners must form a convex quadrilateral")
+    return p

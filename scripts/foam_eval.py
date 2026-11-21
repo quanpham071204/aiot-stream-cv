@@ -1,14 +1,18 @@
 """Run FoamCoverage on still images and save a contact sheet (image | foam mask overlay | %).
 
-    python scripts/foam_eval.py IMG_DIR [IMG_DIR ...] --out foam_sheet.jpg --colors white brown
+    python scripts/foam_eval.py IMG_DIR [IMG_DIR ...] --out foam_sheet.jpg --colors white brown grey shadow
+        --rois scripts/foam_rois.json    (one command line)
 
-No ROI is applied (whole image), so railings, walkways and sky count as "tank" -
-use it to compare colour presets, not as a final accuracy number.
+Without --rois the whole image is measured, so railings, walkways and sky count as
+"tank". With --rois each image is warped to its tank-surface quad (corners given as
+fractions of width/height) and compared with the file's ``ref_pct``; the mean absolute
+error is printed at the end.
 """
 from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -34,9 +38,10 @@ def main() -> None:
     ap.add_argument("dirs", nargs="+")
     ap.add_argument("--out", default="foam_sheet.jpg")
     ap.add_argument("--colors", nargs="+", default=["white"])
+    ap.add_argument("--rois", help="JSON: {image_name: {roi: [[fx, fy] x4], ref_pct: float}}")
     args = ap.parse_args()
 
-    fc = FoamCoverage(colors=args.colors, warp_size=TILE)
+    rois = json.loads(Path(args.rois).read_text(encoding="utf-8")) if args.rois else {}
     rows, table = [], []
     for d in args.dirs:
         for p in sorted(Path(d).rglob("*")):
@@ -46,19 +51,28 @@ def main() -> None:
             if img is None:
                 print(f"skip unreadable {p}", file=sys.stderr)
                 continue
+            spec = rois.get(p.name, {})
+            h, w = img.shape[:2]
+            roi = [[fx * (w - 1), fy * (h - 1)] for fx, fy in spec["roi"]] if "roi" in spec else None
+            fc = FoamCoverage(roi=roi, colors=args.colors, warp_size=TILE)
             pct = fc.coverage(img)
+            ref = spec.get("ref_pct")
             surf = fc.surface(img)
             over = surf.copy()
             over[fc.last_mask > 0] = (0.4 * over[fc.last_mask > 0] + 0.6 * np.array([255, 0, 255])).astype(np.uint8)
-            rows.append(np.hstack([tile(surf, p.name), tile(over, f"{Path(d).name}: {pct:.1f}%")]))
-            table.append((Path(d).name, p.name, round(pct, 1)))
+            label = f"{pct:.1f}%" + (f"  ref {ref:.0f}%" if ref is not None else "")
+            rows.append(np.hstack([tile(surf, p.name), tile(over, label)]))
+            table.append((Path(d).name, p.name, round(pct, 1), ref, None if ref is None else round(pct - ref, 1)))
     if not rows:
         sys.exit("no images found")
     pairs = [np.hstack(rows[i:i + 2]) if i + 1 < len(rows) else np.hstack([rows[i], np.zeros_like(rows[i])])
              for i in range(0, len(rows), 2)]
     cv2.imencode(Path(args.out).suffix or ".jpg", np.vstack(pairs))[1].tofile(args.out)
     with open(Path(args.out).with_suffix(".csv"), "w", newline="", encoding="utf-8") as f:
-        csv.writer(f).writerows([("folder", "image", "foam_pct"), *table])
+        csv.writer(f).writerows([("folder", "image", "foam_pct", "ref_pct", "error"), *table])
+    errs = [r[4] for r in table if r[4] is not None]
+    if errs:
+        print(f"MAE {np.mean(np.abs(errs)):.1f}  bias {np.mean(errs):+.1f}  (n={len(errs)})")
     for row in table:
         print(*row, sep="\t")
 
