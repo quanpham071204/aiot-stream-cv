@@ -15,7 +15,9 @@ import time
 import cv2
 import yaml
 
+from aiot.analyzers import build_analyzers
 from aiot.api import make_server, serve_in_background
+from aiot.async_tracker import AsyncTracker, NullTracker
 from aiot.events import EventStore
 from aiot.evidence import ClipRecorder
 from aiot.pipeline import SourcePipeline
@@ -39,8 +41,13 @@ def build(cfg: dict) -> tuple[dict[str, SourcePipeline], EventStore]:
             loop=s.get("loop", False),
             realtime=s.get("realtime", True),
         )
-        tracker = Tracker(m.get("weights", "yolov8n.pt"), m.get("classes"), m.get("conf", 0.35),
-                          m.get("imgsz", 640), m.get("device"))
+        if not m.get("enabled", True):
+            tracker = NullTracker()
+        else:
+            tracker = Tracker(m.get("weights", "yolov8n.pt"), m.get("classes"), m.get("conf", 0.35),
+                              m.get("imgsz", 640), m.get("device"))
+            if m.get("async", False):  # slow model in its own thread; OpenCV analyzers keep full rate
+                tracker = AsyncTracker(tracker)
         rules = [ZoneIntrusionRule(z["id"], z["polygon"], z.get("min_dwell_s", 1.0),
                                    z.get("lost_timeout_s", 2.0), z.get("classes"))
                  for z in s.get("zones", [])]
@@ -49,7 +56,8 @@ def build(cfg: dict) -> tuple[dict[str, SourcePipeline], EventStore]:
             clips = ClipRecorder(store.dir / "evidence", ev.get("clip_pre_s", 5.0), ev.get("clip_post_s", 5.0),
                                  on_status=store.update_clip)
         pipelines[s["id"]] = SourcePipeline(source, tracker, rules, store, clips,
-                                            offline_grace_s=st.get("offline_grace_s", 10.0))
+                                            offline_grace_s=st.get("offline_grace_s", 10.0),
+                                            analyzers=build_analyzers(s.get("analyzers")))
     return pipelines, store
 
 
@@ -114,6 +122,8 @@ def main() -> None:
     finally:
         for p in pipelines.values():
             p.stop()
+            if isinstance(p.tracker, AsyncTracker):
+                p.tracker.stop()
         if server:
             server.shutdown()
         cv2.destroyAllWindows()

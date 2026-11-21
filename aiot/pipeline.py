@@ -9,6 +9,7 @@ from typing import Optional
 
 import numpy as np
 
+from .analyzers import Analyzer
 from .events import EventStore
 from .evidence import ClipRecorder, percentile
 from .rules import ZoneIntrusionRule
@@ -21,8 +22,12 @@ log = logging.getLogger(__name__)
 
 class SourcePipeline:
     def __init__(self, source: StreamSource, tracker, rules: list[ZoneIntrusionRule], store: EventStore,
-                 clips: Optional[ClipRecorder] = None, offline_grace_s: float = 10.0, stats_window: int = 1000):
+                 clips: Optional[ClipRecorder] = None, offline_grace_s: float = 10.0, stats_window: int = 1000,
+                 analyzers: Optional[list[Analyzer]] = None):
         self.source = source
+        self.analyzers = list(analyzers or [])
+        self._analyzer_ms: dict[str, deque[float]] = {a.name: deque(maxlen=stats_window) for a in self.analyzers}
+        self.analyzer_errors: Counter = Counter()
         self.tracker = tracker
         self.rules = rules
         self.store = store
@@ -85,6 +90,8 @@ class SourcePipeline:
             "input_fps": h["fps"],
             "processing_fps": round(self.processing_fps, 1),
             "infer_ms": stats(self._infer_ms),
+            "analyzer_ms": {name: stats(v) for name, v in self._analyzer_ms.items()},
+            "analyzer_errors": dict(self.analyzer_errors),
             "latency_ms": stats(self._latency_ms),
             "reconnects": h["reconnects"],
             "inference_errors": self.inference_errors,
@@ -128,10 +135,13 @@ class SourcePipeline:
             fired = [(rule, ev) for rule in self.rules for ev in rule.update(tracks, pkt.measured_at)]
             alert_ids = set().union(*(r.inside_ids for r in self.rules)) if self.rules else set()
             annotated = draw(pkt.frame, tracks, [(r.zone_id, r.polygon) for r in self.rules], alert_ids)
+            measurements, analyzer_events = self._run_analyzers(pkt.frame, pkt.measured_at, annotated)
             if self.clips is not None:
                 self.clips.push(annotated, pkt.measured_at)
             for rule, payload in fired:
                 self._emit(rule.event_type, pkt.measured_at, payload, annotated)
+            for event_type, payload in analyzer_events:
+                self._emit(event_type, pkt.measured_at, payload, annotated)
 
             done = time.time()
             if self._last_done is not None and done > self._last_done:
@@ -157,7 +167,30 @@ class SourcePipeline:
                 ],
                 "infer_ms": round(infer_ms, 1),
                 "latency_ms": round(latency_ms, 1),
+                "analyzers": measurements,
             }
+            if "foam_coverage" in measurements:  # flat copy: the field the dashboard reads
+                self.latest_observation["foam_coverage"] = measurements["foam_coverage"]
+
+    def _run_analyzers(self, frame: np.ndarray, t: float, annotated: np.ndarray):
+        """Run every enabled analyzer; a failing one reports status=error (never a fake 0%)."""
+        measurements: dict[str, dict] = {}
+        events: list[tuple[str, dict]] = []
+        for a in self.analyzers:
+            t0 = time.time()
+            try:
+                res = a.process(frame, t)
+            except Exception as e:  # noqa: BLE001 - isolate analyzers from each other
+                log.exception("[%s] analyzer %s failed", self.source.source_id, a.name)
+                self.analyzer_errors[a.name] += 1
+                measurements[a.name] = {"status": "error", "error": str(e), "updated_at": iso(t)}
+                continue
+            self._analyzer_ms[a.name].append((time.time() - t0) * 1000)
+            if res.measurement is not None:
+                measurements[a.name] = res.measurement
+            events.extend((a.event_type or a.name, payload) for payload in res.events)
+            a.draw(annotated)
+        return measurements, events
 
     def _check_health(self) -> None:
         h = self.source.health()
