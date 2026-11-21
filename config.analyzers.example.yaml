@@ -15,6 +15,8 @@ sources:
         calibrate_frames: 10
         darker_than_local: 10        # drop colour matches >10 levels darker than their surroundings (brown/grey water
                                     # between foam); remove to turn off
+        brighter_than_local: 8       # also count fairly colourless spots brighter than their surroundings (dull
+                                    # grey-brown foam veins on dark water); remove to turn off
         kernel_px: 5                # speckle filter; use 3 when the camera is far and foam lines are thin
       overflow:
         enabled: true

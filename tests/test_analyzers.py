@@ -269,3 +269,16 @@ def test_darker_than_local_drops_brown_water_cells_between_brown_foam():
     assert local.coverage(frame((150, 190, 225))) > 95            # uniform foam is untouched
     with pytest.raises(ValueError):
         FoamCoverage(darker_than_local=-1)
+
+
+def test_brighter_than_local_catches_dull_foam_veins_no_preset_matches():
+    f = frame((60, 65, 70))                    # dark grey-brown water
+    f[:, 70:80] = (85, 95, 105)                # dull foam vein: no colour preset matches (V ~105, S ~49)
+    f[55:65, :] = (85, 95, 105)
+    vein_pct = (10 * 120 + 10 * 160 - 100) * 100 / (120 * 160)
+    assert FoamCoverage(colors=["white", "brown", "grey", "shadow"], kernel_px=1).coverage(f) < 1
+    fc = FoamCoverage(colors=["white", "brown", "grey", "shadow"], kernel_px=1, brighter_than_local=8)
+    assert fc.coverage(f) == pytest.approx(vein_pct, abs=3)
+    assert fc.coverage(frame((60, 65, 70))) < 1                    # flat water: nothing is locally bright
+    with pytest.raises(ValueError):
+        FoamCoverage(brighter_than_local=0)

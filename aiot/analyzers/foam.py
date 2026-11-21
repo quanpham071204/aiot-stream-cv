@@ -15,6 +15,9 @@
    water cells between brown foam, or grey water between white foam, are not foam.
    Water patches wider than the comparison window (``local_window_frac`` of the
    surface width) are not caught, and a scene that is all water stays as measured.
+   Optionally (``brighter_than_local``) a fairly colourless pixel that is brighter than
+   its neighbourhood counts as foam even without a colour match: dull grey-brown foam
+   veins on dark water (advisor photo SH-bot-den-xam-05, traced by hand).
 3. Morphological open/close removes speckle and fills foam patches.
 4. Coverage = foam pixels / ROI pixels, smoothed with an exponential moving average.
 
@@ -50,7 +53,8 @@ class FoamCoverage(Analyzer):
                  colors: Sequence = ("white",), brighter_than_water: float = 40.0, kernel_px: int = 5,
                  smooth_alpha: float = 0.3, reset_after_s: float = 10.0, calibrate: Optional[str] = None,
                  calibrate_frames: int = 10, darker_than_local: Optional[float] = None,
-                 local_window_frac: float = 0.25):
+                 local_window_frac: float = 0.25, brighter_than_local: Optional[float] = None,
+                 local_max_saturation: int = 80):
         if roi is not None and len(roi) != 4:
             raise ValueError("foam_coverage.roi needs exactly 4 corner points")
         if not 0 < smooth_alpha <= 1:
@@ -67,7 +71,11 @@ class FoamCoverage(Analyzer):
             raise ValueError("foam_coverage.darker_than_local must be >= 0 (or omitted to turn it off)")
         if not 0 < local_window_frac <= 1:
             raise ValueError("foam_coverage.local_window_frac must be in (0, 1]")
+        if brighter_than_local is not None and brighter_than_local <= 0:
+            raise ValueError("foam_coverage.brighter_than_local must be > 0 (or omitted to turn it off)")
         self.darker_than_local = darker_than_local
+        self.brighter_than_local = brighter_than_local
+        self.local_max_saturation = int(local_max_saturation)
         w = max(3, int(round(self.warp_size[0] * local_window_frac)) | 1)  # odd box size, ~1/4 of the surface width
         self.local_window = (w, w)
         self.water_v: Optional[float] = None
@@ -125,13 +133,23 @@ class FoamCoverage(Analyzer):
         if self.kernel is not None:
             m = cv2.morphologyEx(m, cv2.MORPH_OPEN, self.kernel)
             m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.kernel)
+        if self.darker_than_local is None and self.brighter_than_local is None:
+            return m
+        v = hsv[:, :, 2].astype(np.float32)
+        rel = v - cv2.blur(v, self.local_window)   # brightness relative to the neighbourhood
         if self.darker_than_local is not None:
-            # after the clean-up, so the open step does not erase what this leaves of thin foam lines;
-            # a final close re-joins foam split by small dark bubble gaps
-            v = hsv[:, :, 2].astype(np.float32)
-            m &= (v >= cv2.blur(v, self.local_window) - self.darker_than_local).astype(np.uint8) * 255
+            # after the clean-up, so the open step does not erase what this leaves of thin foam lines
+            m &= (rel >= -self.darker_than_local).astype(np.uint8) * 255
+        if self.brighter_than_local is not None:
+            # dull grey-brown foam veins on dark water: no colour preset fits, but they are the
+            # locally bright, fairly colourless part of the surface
+            dull = hsv[:, :, 1] <= self.local_max_saturation
+            add = ((rel >= self.brighter_than_local) & dull).astype(np.uint8) * 255
             if self.kernel is not None:
-                m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.kernel)
+                add = cv2.morphologyEx(add, cv2.MORPH_OPEN, self.kernel)
+            m |= add
+        if self.kernel is not None:  # re-join foam split by small dark bubble gaps
+            m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, self.kernel)
         return m
 
     def coverage(self, frame: np.ndarray) -> float:
