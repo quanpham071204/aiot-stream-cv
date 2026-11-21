@@ -214,3 +214,46 @@ def test_shadow_preset_catches_blue_tinted_foam():
     f[:60] = (225, 190, 160)                    # foam in shade, bluish (S ~ 74 > white's 60)
     assert FoamCoverage(colors=["white"], kernel_px=1).coverage(f) < 5
     assert FoamCoverage(colors=["white", "shadow"], kernel_px=1).coverage(f) == pytest.approx(50, abs=1)
+
+
+# --- calibration from config (calibrate: first_frames | clean-tank image) ------------------------------------------
+LIGHT_BROWN_WATER = (95, 150, 185)            # sunlit mixed liquor: inside the brown preset, but it is water
+
+
+def test_calibrate_first_frames_reports_calibrating_then_stops_water_counting_as_foam():
+    uncal = FoamCoverage(colors=["white", "brown"], kernel_px=1)
+    assert uncal.coverage(frame(LIGHT_BROWN_WATER)) > 90                  # the problem seen on Pexels video 1
+    fc = FoamCoverage(colors=["white", "brown"], kernel_px=1, calibrate="first_frames", calibrate_frames=3)
+    statuses = [fc.process(frame(LIGHT_BROWN_WATER), i).measurement["status"] for i in range(3)]
+    assert statuses == ["calibrating", "calibrating", "ok"]
+    assert fc.water_v is not None
+    f = frame(LIGHT_BROWN_WATER)
+    f[:60] = WHITE                                                        # real foam still counts
+    m = fc.process(f, 3.0).measurement
+    assert m["calibrated"] and m["raw_pct"] == pytest.approx(50, abs=1)
+
+
+def test_calibrate_from_clean_tank_image(tmp_path):
+    import cv2
+    clean = tmp_path / "clean.png"
+    cv2.imwrite(str(clean), frame(LIGHT_BROWN_WATER))
+    fc = FoamCoverage(colors=["white", "brown"], kernel_px=1, calibrate=str(clean))
+    m = fc.process(frame(LIGHT_BROWN_WATER), 0.0).measurement
+    assert m["status"] == "ok" and m["calibrated"] and m["raw_pct"] < 5
+
+
+def test_calibrate_bad_inputs_fail_loudly(tmp_path):
+    import cv2
+    with pytest.raises(ValueError):
+        FoamCoverage(calibrate=str(tmp_path / "missing.png"))
+    with pytest.raises(ValueError):
+        FoamCoverage(calibrate="first_frames", calibrate_frames=0)
+    small = tmp_path / "small.png"
+    cv2.imwrite(str(small), frame(h=60, w=80))
+    with pytest.raises(ValueError):                                       # photo from another resolution
+        FoamCoverage(calibrate=str(small)).process(frame(), 0.0)
+
+
+def test_calibrate_option_reaches_analyzer_via_config():
+    (fc,) = build_analyzers({"foam_coverage": {"calibrate": "first_frames", "calibrate_frames": 2}})
+    assert fc.process(frame(), 0.0).measurement["status"] == "calibrating"

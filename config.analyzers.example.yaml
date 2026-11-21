@@ -10,6 +10,10 @@ sources:
         roi: [[120, 80], [520, 80], [560, 400], [80, 400]]   # tank surface corners, clockwise from top-left
         colors: [white, brown, grey, shadow]  # HSV presets in aiot/analyzers/foam.py; grey/shadow need a tight ROI
         smooth_alpha: 0.3
+        calibrate: first_frames     # learn the water brightness from the first frames (start on a calm, foam-free tank);
+                                    # or a path to a clean-tank photo from this camera; remove to turn off
+        calibrate_frames: 10
+        kernel_px: 5                # speckle filter; use 3 when the camera is far and foam lines are thin
       overflow:
         enabled: true
         zone_id: tray_front

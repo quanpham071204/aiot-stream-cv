@@ -3,8 +3,13 @@
 1. Warp the tank surface (4-point ROI) to a fixed top-down rectangle, so every
    pixel stands for about the same area and railings/sky are cut away.
 2. A pixel is foam if its HSV colour falls inside one of the configured ranges
-   (presets ``white`` and ``brown``), or - after ``calibrate()`` on a clean tank -
-   if it is clearly brighter than the clean water.
+   (presets ``white``, ``brown``, ``grey``, ``shadow``), or - after calibration on
+   the water - if it is clearly brighter than the water. Calibration is strongly
+   recommended (it stops bright brown water from counting as brown foam):
+   ``calibrate: first_frames`` learns the water brightness from the first
+   ``calibrate_frames`` frames after start (start the camera on a calm, foam-free
+   tank); ``calibrate: <path to image>`` uses a photo of the clean tank taken by the
+   same camera at the same resolution.
 3. Morphological open/close removes speckle and fills foam patches.
 4. Coverage = foam pixels / ROI pixels, smoothed with an exponential moving average.
 
@@ -12,6 +17,7 @@ No alert is raised: phase 1 only reports the measurement.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional, Sequence
 
 import cv2
@@ -37,7 +43,8 @@ class FoamCoverage(Analyzer):
 
     def __init__(self, roi: Optional[Sequence[Sequence[float]]] = None, warp_size: Sequence[int] = (320, 240),
                  colors: Sequence = ("white",), brighter_than_water: float = 40.0, kernel_px: int = 5,
-                 smooth_alpha: float = 0.3, reset_after_s: float = 10.0):
+                 smooth_alpha: float = 0.3, reset_after_s: float = 10.0, calibrate: Optional[str] = None,
+                 calibrate_frames: int = 10):
         if roi is not None and len(roi) != 4:
             raise ValueError("foam_coverage.roi needs exactly 4 corner points")
         if not 0 < smooth_alpha <= 1:
@@ -53,6 +60,24 @@ class FoamCoverage(Analyzer):
         self.water_v: Optional[float] = None
         self.value: Optional[float] = None
         self.last_mask: Optional[np.ndarray] = None
+        # calibration source: None (off), "first_frames", or a clean-tank image applied on the first frame
+        self._cal_image: Optional[np.ndarray] = None
+        self._cal_samples: list[float] = []
+        self._cal_mode: Optional[str] = None
+        if calibrate is not None:
+            if calibrate_frames < 1:
+                raise ValueError("foam_coverage.calibrate_frames must be >= 1")
+            self.calibrate_frames = int(calibrate_frames)
+            if calibrate == "first_frames":
+                self._cal_mode = "first_frames"
+            else:
+                img = None
+                if Path(calibrate).is_file():  # imdecode(fromfile): unicode-safe paths on Windows
+                    img = cv2.imdecode(np.fromfile(str(calibrate), np.uint8), cv2.IMREAD_COLOR)
+                if img is None:
+                    raise ValueError(f"foam_coverage.calibrate: cannot read clean-tank image {calibrate!r} "
+                                     "(use 'first_frames' or an image path)")
+                self._cal_mode, self._cal_image = "image", img
 
     # --- helpers -------------------------------------------------------------------------------------------------
     def surface(self, frame: np.ndarray) -> np.ndarray:
@@ -64,10 +89,12 @@ class FoamCoverage(Analyzer):
         m = cv2.getPerspectiveTransform(self.roi, dst)
         return cv2.warpPerspective(frame, m, (w, h), flags=cv2.INTER_AREA)
 
+    def _water_level(self, frame: np.ndarray) -> float:
+        return float(np.median(cv2.cvtColor(self.surface(frame), cv2.COLOR_BGR2HSV)[:, :, 2]))
+
     def calibrate(self, clean_frame: np.ndarray) -> float:
         """Remember the brightness of the clean (foam-free) water surface."""
-        v = cv2.cvtColor(self.surface(clean_frame), cv2.COLOR_BGR2HSV)[:, :, 2]
-        self.water_v = float(np.median(v))
+        self.water_v = self._water_level(clean_frame)
         return self.water_v
 
     def mask(self, frame: np.ndarray) -> np.ndarray:
@@ -94,6 +121,20 @@ class FoamCoverage(Analyzer):
 
     # --- Analyzer API ----------------------------------------------------------------------------------------------
     def process(self, frame: np.ndarray, t: float) -> AnalyzerResult:
+        if self._cal_mode == "image":
+            if self._cal_image.shape != frame.shape:
+                raise ValueError(f"foam_coverage.calibrate image is {self._cal_image.shape[1::-1]} but the stream "
+                                 f"is {frame.shape[1::-1]}; take the clean-tank photo with the same camera setting")
+            self.calibrate(self._cal_image)
+            self._cal_mode, self._cal_image = None, None
+        elif self._cal_mode == "first_frames":
+            self._cal_samples.append(self._water_level(frame))
+            if len(self._cal_samples) < self.calibrate_frames:
+                return AnalyzerResult(measurement={"status": "calibrating", "calibrated": False,
+                                                   "frames_left": self.calibrate_frames - len(self._cal_samples),
+                                                   "updated_at": iso(t)})
+            self.water_v = float(np.median(self._cal_samples))
+            self._cal_mode, self._cal_samples = None, []
         raw = self.coverage(frame)
         a = self.smooth_alpha
         stale = self._last_t is None or t - self._last_t > self.reset_after_s
