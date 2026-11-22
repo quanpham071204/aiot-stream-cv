@@ -42,27 +42,38 @@ def grab(source: str, warm_frames: int = 15) -> np.ndarray:
 
 
 def parse_points(s: str) -> list[list[int]]:
-    return [[int(float(v)) for v in p.split(",")] for p in s.split()]
+    pts = []
+    for p in s.split():
+        xy = p.split(",")
+        try:
+            if len(xy) != 2:
+                raise ValueError
+            pts.append([int(float(xy[0])), int(float(xy[1]))])
+        except ValueError:
+            sys.exit(f"bad point {p!r}: write each corner as x,y (e.g. \"10,20 300,20 300,200 10,200\")")
+    return pts
 
 
-def to_yaml(foam: list, overflow: list, frame_shape) -> str:
+def to_yaml(foam: list, overflow: list, frame_shape, clean: str | None = None) -> str:
     h, w = frame_shape[:2]
     lines = [f"# frame size {w}x{h}: keep the camera at this resolution, or measure again"]
     lines += ["analyzers:", "  foam_coverage:", "    enabled: true", f"    roi: {foam}",
-              "    colors: [white, brown, grey, shadow]", "    calibrate: first_frames"]
+              "    colors: [white, brown, grey, shadow]",
+              f"    calibrate: {clean}" if clean else "    calibrate: first_frames   # start on a calm, foam-free tank"]
     if overflow:
         lines += ["  overflow:", "    enabled: true", "    zone_id: tray_front", f"    roi: {overflow}"]
     return "\n".join(lines)
 
 
-def check(foam: list, overflow: list) -> None:
+def check(foam: list, overflow: list) -> list:
+    """Validate like the service does; return the tank corners in TL, TR, BR, BL order."""
     if len(foam) != 4:
         sys.exit(f"tank surface needs exactly 4 corners, got {len(foam)}")
     if overflow and len(overflow) < 3:
         sys.exit(f"overflow tray needs at least 3 corners, got {len(overflow)}")
     from aiot.analyzers.foam import FoamCoverage  # same validation as the service (convex quad)
 
-    FoamCoverage(roi=foam)
+    return FoamCoverage(roi=foam).roi.astype(int).tolist()
 
 
 def click(frame: np.ndarray) -> tuple[list, list]:
@@ -110,6 +121,8 @@ def main() -> None:
     args = ap.parse_args()
 
     if args.image:
+        if not Path(args.image).is_file():
+            sys.exit(f"no such image {args.image!r}")
         frame = cv2.imdecode(np.fromfile(args.image, np.uint8), cv2.IMREAD_COLOR)
         if frame is None:
             sys.exit(f"cannot read {args.image!r}")
@@ -123,14 +136,14 @@ def main() -> None:
         foam, overflow = parse_points(args.points), parse_points(args.overflow) if args.overflow else []
     else:
         foam, overflow = click(frame)
-    check(foam, overflow)
+    foam = check(foam, overflow)
     if args.save:
         view = frame.copy()
         for pts, (_, color) in zip((foam, overflow), REGIONS, strict=True):
             if pts:
                 cv2.polylines(view, [np.array(pts, np.int32)], True, color, 2)
         cv2.imencode(Path(args.save).suffix or ".jpg", view)[1].tofile(args.save)
-    print(to_yaml(foam, overflow, frame.shape))
+    print(to_yaml(foam, overflow, frame.shape, args.clean))
 
 
 if __name__ == "__main__":

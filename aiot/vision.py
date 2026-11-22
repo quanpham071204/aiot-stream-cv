@@ -40,7 +40,10 @@ class Tracker:
             # The first inference loads CUDA kernels / allocates buffers (measured 8.4 s on the
             # team laptop's GPU). Pay it here, before the stream starts, instead of on the first
             # frames (sync mode dropped ~200 frames). predict() leaves the ByteTrack state untouched.
-            self.model.predict(np.zeros((imgsz, imgsz, 3), np.uint8), imgsz=imgsz, device=device, verbose=False)
+            # imgsz may be an int or [h, w] (both valid for ultralytics); use a full-size dummy frame so the
+            # warmed-up kernels match the real input size.
+            h, w = (imgsz, imgsz) if isinstance(imgsz, (int, float)) else (imgsz[0], imgsz[-1])
+            self.model.predict(np.zeros((int(h), int(w), 3), np.uint8), imgsz=imgsz, device=device, verbose=False)
 
     def update(self, frame: np.ndarray) -> list[Track]:
         r = self.model.track(frame, persist=True, tracker=self.tracker_cfg, classes=self.classes,

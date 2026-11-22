@@ -282,3 +282,82 @@ def test_brighter_than_local_catches_dull_foam_veins_no_preset_matches():
     assert fc.coverage(frame((60, 65, 70))) < 1                    # flat water: nothing is locally bright
     with pytest.raises(ValueError):
         FoamCoverage(brighter_than_local=0)
+
+
+# --- cross-test round 2 (Argon T055): confirmed bugs, now regression tests -----------------------------------------
+def test_t055_2_calibrate_image_applies_to_plain_coverage_calls(tmp_path):
+    import cv2
+    clean = np.full((240, 320, 3), (50, 110, 150), np.uint8)       # bright brown water, inside the brown preset
+    p = tmp_path / "clean.png"
+    cv2.imwrite(str(p), clean)
+    fc = FoamCoverage(colors=("brown",), calibrate=str(p))
+    assert fc.water_v == pytest.approx(150.0)
+    assert fc.coverage(clean) == 0.0                                # was 100 %: calibration only ran in process()
+    with pytest.raises(ValueError):                                 # size checked on every frame, not just the first
+        fc.process(np.zeros((120, 160, 3), np.uint8), 0.0)
+
+
+def test_t055_3_brighter_than_local_ignores_water_darker_than_calibrated_level():
+    fc = FoamCoverage(colors=("white",), brighter_than_local=8.0)
+    fc.calibrate(np.full((240, 320, 3), 100, np.uint8))
+    shaded = np.full((240, 320, 3), 70, np.uint8)
+    shaded[:, :160] = 40                                            # shadow edge on clean water
+    assert fc.coverage(shaded) == 0.0                               # was 5.9 %
+
+
+def test_t055_4_darker_than_local_keeps_shaded_band_of_white_foam():
+    full = np.full((240, 320, 3), 250, np.uint8)
+    full[:, 145:175] = 190                                          # 30 px band of shaded white foam
+    fc = FoamCoverage(colors=("white",), darker_than_local=10.0)
+    fc.calibrate(np.full((240, 320, 3), 60, np.uint8))
+    assert fc.coverage(full) == pytest.approx(100.0, abs=1.0)      # was 90.6 %: 130 levels above water = foam
+    # uncalibrated, only V >= BRIGHT_FOAM_V (200) is safe from the filter: lower would bring back grey water
+    # between foam (sh-bot-trang-07). Known limit: a V=190 band is still cut without calibration.
+    uncal = FoamCoverage(colors=("white",), darker_than_local=10.0)
+    assert uncal.coverage(full) == pytest.approx(90.6, abs=1.0)
+    full[:, 145:175] = 205
+    assert uncal.coverage(full) == pytest.approx(100.0, abs=1.0)
+
+
+def test_t055_6_first_frames_on_a_tank_already_60pct_foam():
+    fc = FoamCoverage(colors=("white",), calibrate="first_frames", calibrate_frames=3)
+    f = np.full((240, 320, 3), 50, np.uint8)
+    f[:144] = 210                                                   # 60 % white foam at start-up
+    for t in range(3):
+        m = fc.process(f, float(t)).measurement
+    assert fc.water_v == pytest.approx(50.0)                        # 25th percentile, not the median (= foam)
+    assert m["raw_pct"] == pytest.approx(60.0, abs=1.0)             # was 0 %
+
+
+def test_t055_manual_calibrate_cancels_pending_first_frames():
+    fc = FoamCoverage(calibrate="first_frames", calibrate_frames=5)
+    fc.calibrate(frame())
+    assert fc.process(frame(), 0.0).measurement["status"] == "ok"
+
+
+def test_t055_5_window_and_warp_size_limits():
+    fc = FoamCoverage(warp_size=(320, 240), local_window_frac=1.0, darker_than_local=10.0)
+    assert fc.local_window[0] <= 240 and fc.local_window[0] % 2 == 1
+    assert FoamCoverage(warp_size=(16, 12), kernel_px=5).local_window[0] >= 11   # >= kernel..., <= surface
+    with pytest.raises(ValueError):
+        FoamCoverage(warp_size=(0, 240))
+
+
+def test_t055_7_tracker_warmup_accepts_hw_imgsz(monkeypatch):
+    import sys
+    import types
+
+    from aiot.vision import Tracker
+    calls = []
+
+    class FakeYOLO:
+        def __init__(self, weights):
+            pass
+
+        def predict(self, img, **kw):
+            calls.append((img.shape, kw["imgsz"]))
+
+    monkeypatch.setitem(sys.modules, "ultralytics", types.SimpleNamespace(YOLO=FakeYOLO))
+    Tracker(weights="x.pt", imgsz=[384, 640])                       # was TypeError
+    Tracker(weights="x.pt", imgsz=640)
+    assert calls == [((384, 640, 3), [384, 640]), ((640, 640, 3), 640)]
