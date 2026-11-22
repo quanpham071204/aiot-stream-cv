@@ -10,6 +10,21 @@ sources:
         min_dwell_s: 1.0
         lost_timeout_s: 2.0
         classes: [person]
+    # Wastewater analyzers on the bundled sample video, so the dashboard receives foam_coverage and
+    # overflow out of the box. The regions are PLACEHOLDERS (lawn with litter, footpath): the numbers mean
+    # nothing for a tank (foam ~2 %, a person crossing changes ~5 % of the "tray", below on_ratio, so
+    # normally no overflow event). For the demo tank use scripts/pick_roi.py and docs/analyzers.md.
+    analyzers:
+      foam_coverage:
+        roi: [[20, 360], [300, 360], [300, 560], [20, 560]]
+        colors: [white, brown, grey, shadow]
+        calibrate: first_frames
+        darker_than_local: 10
+        brighter_than_local: 8
+      overflow:
+        zone_id: tray_front
+        roi: [[100, 240], [380, 240], [380, 300], [100, 300]]
+        cooldown_s: 30
   # Intentionally offline source for demonstrating reconnect and health events.
   - id: cam02_offline
     uri: rtsp://127.0.0.1:8554/not-running
