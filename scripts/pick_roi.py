@@ -13,6 +13,7 @@ Coordinates are in the camera's own pixels, which is what config.yaml expects.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -49,7 +50,7 @@ def parse_points(s: str) -> list[list[int]]:
             if len(xy) != 2:
                 raise ValueError
             pts.append([int(float(xy[0])), int(float(xy[1]))])
-        except ValueError:
+        except (ValueError, OverflowError):  # OverflowError: int(float("inf"))
             sys.exit(f"bad point {p!r}: write each corner as x,y (e.g. \"10,20 300,20 300,200 10,200\")")
     return pts
 
@@ -57,16 +58,23 @@ def parse_points(s: str) -> list[list[int]]:
 def to_yaml(foam: list, overflow: list, frame_shape, clean: str | None = None) -> str:
     h, w = frame_shape[:2]
     lines = [f"# frame size {w}x{h}: keep the camera at this resolution, or measure again"]
+    # a JSON string is a valid YAML double-quoted scalar: keeps '#', ':' and backslashes in Windows paths
+    cal = json.dumps(clean, ensure_ascii=False) if clean else "first_frames   # start on a calm, foam-free tank"
     lines += ["analyzers:", "  foam_coverage:", "    enabled: true", f"    roi: {foam}",
-              "    colors: [white, brown, grey, shadow]",
-              f"    calibrate: {clean}" if clean else "    calibrate: first_frames   # start on a calm, foam-free tank"]
+              "    colors: [white, brown, grey, shadow]", f"    calibrate: {cal}"]
     if overflow:
         lines += ["  overflow:", "    enabled: true", "    zone_id: tray_front", f"    roi: {overflow}"]
     return "\n".join(lines)
 
 
-def check(foam: list, overflow: list) -> list:
+def check(foam: list, overflow: list, frame_shape=None) -> list:
     """Validate like the service does; return the tank corners in TL, TR, BR, BL order."""
+    if frame_shape is not None:  # a corner outside the picture makes the warped surface partly black
+        h, w = frame_shape[:2]
+        for name, pts in (("tank surface", foam), ("overflow tray", overflow)):
+            bad = [p for p in pts if not (0 <= p[0] < w and 0 <= p[1] < h)]
+            if bad:
+                sys.exit(f"{name} corner(s) {bad} outside the {w}x{h} frame (x 0..{w - 1}, y 0..{h - 1})")
     if len(foam) != 4:
         sys.exit(f"tank surface needs exactly 4 corners, got {len(foam)}")
     if overflow and len(overflow) < 3:
@@ -129,6 +137,7 @@ def main() -> None:
     else:
         frame = grab(args.source)
     if args.clean:
+        Path(args.clean).parent.mkdir(parents=True, exist_ok=True)
         cv2.imencode(Path(args.clean).suffix or ".jpg", frame)[1].tofile(args.clean)
         print(f"saved clean-tank photo {args.clean} (use: calibrate: {args.clean})", file=sys.stderr)
 
@@ -136,7 +145,7 @@ def main() -> None:
         foam, overflow = parse_points(args.points), parse_points(args.overflow) if args.overflow else []
     else:
         foam, overflow = click(frame)
-    foam = check(foam, overflow)
+    foam = check(foam, overflow, frame.shape)
     if args.save:
         view = frame.copy()
         for pts, (_, color) in zip((foam, overflow), REGIONS, strict=True):
