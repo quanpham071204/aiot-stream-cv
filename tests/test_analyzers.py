@@ -361,3 +361,37 @@ def test_t055_7_tracker_warmup_accepts_hw_imgsz(monkeypatch):
     Tracker(weights="x.pt", imgsz=[384, 640])                       # was TypeError
     Tracker(weights="x.pt", imgsz=640)
     assert calls == [((384, 640, 3), [384, 640]), ((640, 640, 3), 640)]
+
+
+# --- cross-test round 3 (2 Gemini, T057): confirmed bugs ----------------------------------------------------------
+def test_t057_manual_calibrate_sets_the_size_and_coverage_checks_it():
+    fc = FoamCoverage()
+    fc.calibrate(np.full((240, 320, 3), 50, np.uint8))
+    with pytest.raises(ValueError, match="calibrated on a"):
+        fc.coverage(np.full((120, 160, 3), 250, np.uint8))         # was silently measured
+    fc.calibrate(np.full((480, 640, 3), 50, np.uint8))             # was: process() kept the old size
+    assert fc.process(np.full((480, 640, 3), 50, np.uint8), 0.0).measurement["status"] == "ok"
+
+
+@pytest.mark.parametrize("imgsz, hw", [(np.int64(640), (640, 640)), (640.0, (640, 640)), ((384, 640), (384, 640)),
+                                       ([512], (512, 512))])
+def test_t057_tracker_warmup_imgsz_forms(monkeypatch, imgsz, hw):
+    import sys
+    import types
+
+    from aiot.vision import Tracker
+    seen = []
+
+    class FakeYOLO:
+        def __init__(self, weights):
+            pass
+
+        def predict(self, img, **kw):
+            seen.append(img.shape[:2])
+
+    monkeypatch.setitem(sys.modules, "ultralytics", types.SimpleNamespace(YOLO=FakeYOLO))
+    Tracker(weights="x.pt", imgsz=imgsz)                            # np.int64 was IndexError
+    assert seen == [hw]
+    for bad in ("640", 0, [-1, 640], [1, 2, 3]):
+        with pytest.raises(ValueError):
+            Tracker(weights="x.pt", imgsz=bad)

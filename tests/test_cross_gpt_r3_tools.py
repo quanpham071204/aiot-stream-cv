@@ -96,7 +96,7 @@ def test_calibrate_checks_size_after_valid_frames_and_recovers(image, shape):
     assert analyzer.process(frame, 1).measurement["calibrated"]
     # Repeated mismatches ensure validation is not consumed by the first frame/error.
     for t in (2, 3):
-        with pytest.raises(ValueError, match=r"calibrate image.*stream"):
+        with pytest.raises(ValueError, match=r"calibrated on a .* frame but this frame is"):
             analyzer.process(np.full(shape, 180, np.uint8), t)
     assert analyzer.process(frame, 4).measurement["raw_pct"] == 0
     assert analyzer.water_v == pytest.approx(180)

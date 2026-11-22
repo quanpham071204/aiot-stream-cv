@@ -24,7 +24,7 @@ def foam(**options):
     return FoamCoverage(**settings)
 
 
-def test_percentile_25_finds_water_below_a_70_percent_foam_layer():
+def test_water_level_ignores_a_70_percent_white_foam_layer():
     mixed = frame(220)
     mixed[:, :30] = 60
     analyzer = foam()
@@ -33,23 +33,23 @@ def test_percentile_25_finds_water_below_a_70_percent_foam_layer():
 
 
 def test_bounded_water_noise_does_not_trigger_either_local_filter():
-    # Each intensity occupies 25%; Q25=97 and even the brightest is < Q25+20.
+    # Each intensity occupies 25%; water level = median 104 (round 3 / T057: median of non-white pixels).
     clean = frame(88)
     for column, value in enumerate((88, 100, 108, 112)):
         clean[:, column * 25:(column + 1) * 25] = value
     analyzer = foam(darker_than_local=5, brighter_than_local=8)
-    assert analyzer.calibrate(clean) == pytest.approx(97)
+    assert analyzer.calibrate(clean) == pytest.approx(104)
     assert analyzer.coverage(clean) == 0
 
 
-def test_high_contrast_water_noise_has_a_known_false_positive_limit():
-    # A clean reference with 30% dark water and 70% brighter water is ambiguous:
-    # the scalar Q25 baseline cannot distinguish its brighter region from foam.
+def test_partly_shaded_clean_water_is_not_foam():
+    # Was a known limit with the Q25 water level (T057 A1/B1: sunlit 70 % counted as foam).
+    # The median of non-white pixels follows the larger, sunlit part, and the shade is below it.
     clean = frame(105)
     clean[:, :30] = 60
     analyzer = foam(colors=[])
-    assert analyzer.calibrate(clean) == 60
-    assert analyzer.coverage(clean) == pytest.approx(70)
+    assert analyzer.calibrate(clean) == 105
+    assert analyzer.coverage(clean) == 0
 
 
 def test_first_frames_takes_the_temporal_median_of_spatial_percentiles():
@@ -146,24 +146,23 @@ def test_calibrated_absolute_brightness_protects_a_locally_dark_band(band_v, exp
     assert analyzer.coverage(full) == pytest.approx(expected_pct)
 
 
-@pytest.mark.parametrize(("vein_v", "expected_pct"), [(119, 0), (120, 2), (121, 2)])
-def test_local_addition_obeys_the_inclusive_half_water_threshold(vein_v, expected_pct):
+@pytest.mark.parametrize(("vein_v", "expected_pct"), [(107, 0), (108, 2), (109, 2)])
+def test_local_addition_obeys_the_inclusive_water_threshold(vein_v, expected_pct):
     shaded = frame(60)
     shaded[:, 49:51] = vein_v
     analyzer = foam(colors=[], darker_than_local=5, brighter_than_local=8)
     analyzer.calibrate(frame(100))
-    # Empty presets isolate local addition; +19 fails and +20/+21 pass.
+    # Empty presets isolate local addition; since T057 A5 a vein must be >= brighter_than_local (8) above water:
+    # +7 fails and +8/+9 pass.
     assert analyzer.coverage(shaded) == pytest.approx(expected_pct)
 
 
 @pytest.mark.parametrize(("size", "kernel", "fraction", "expected_window"), [
     ((8, 8), 1, 0.001, 3),
-    ((8, 8), 31, 1.0, 7),
-    ((9, 64), 31, 0.01, 9),
-    ((64, 8), 31, 0.01, 7),
-    ((8, 64), 31, 1.0, 7),
-    ((64, 9), 5, 0.01, 9),
-    ((31, 17), 9, 1.0, 17),
+    ((8, 8), 2, 1.0, 7),
+    ((17, 64), 5, 0.01, 15),
+    ((64, 9), 3, 0.01, 9),
+    ((31, 17), 5, 1.0, 17),
     ((101, 80), 1, 0.1, 9),
 ])
 def test_small_and_extreme_warps_with_large_kernels(size, kernel, fraction, expected_window):
@@ -175,6 +174,14 @@ def test_small_and_extreme_warps_with_large_kernels(size, kernel, fraction, expe
     assert analyzer.coverage(frame(60)) == 0
     assert analyzer.coverage(frame(240)) == 100
     assert analyzer.last_mask.shape == (size[1], size[0])
+
+
+@pytest.mark.parametrize(("size", "kernel"), [((8, 8), 31), ((9, 64), 31), ((64, 8), 31), ((64, 9), 5), ((31, 17), 9)])
+def test_local_filters_reject_a_surface_too_small_for_the_kernel(size, kernel):
+    # T057 A6: the window used to be clamped below 3 x kernel, and the open step then erased the local filters
+    with pytest.raises(ValueError, match="too small for kernel_px"):
+        foam(warp_size=size, kernel_px=kernel, darker_than_local=5, brighter_than_local=8)
+    foam(warp_size=size, kernel_px=kernel)                      # without the local filters it is fine
 
 
 @pytest.mark.parametrize("size", [(7, 8), (8, 7), (1, 64), (0, 8), (-1, 8)])

@@ -83,6 +83,9 @@ class FoamCoverage(Analyzer):
         w = max(3, int(round(self.warp_size[0] * local_window_frac)), 3 * max(1, kernel_px))
         w = min(w, min(self.warp_size))
         w = w if w % 2 else w - 1
+        if (darker_than_local is not None or brighter_than_local is not None) and w < 3 * max(1, kernel_px):
+            raise ValueError(f"foam_coverage.warp_size {self.warp_size} is too small for kernel_px={kernel_px} with "
+                             f"the local filters: the shorter side must be >= {3 * kernel_px} px")
         self.local_window = (w, w)
         self.water_v: Optional[float] = None
         self.value: Optional[float] = None
@@ -104,9 +107,7 @@ class FoamCoverage(Analyzer):
                 if img is None:
                     raise ValueError(f"foam_coverage.calibrate: cannot read clean-tank image {calibrate!r} "
                                      "(use 'first_frames' or an image path)")
-                # applied now, so coverage()/mask() use it too; the frame size is checked on every process()
-                self.calibrate(img)
-                self._cal_shape = img.shape
+                self.calibrate(img)  # applied now, so coverage()/mask() use it too
 
     # --- helpers -------------------------------------------------------------------------------------------------
     def surface(self, frame: np.ndarray) -> np.ndarray:
@@ -119,21 +120,36 @@ class FoamCoverage(Analyzer):
         return cv2.warpPerspective(frame, m, (w, h), flags=cv2.INTER_AREA)
 
     BRIGHT_FOAM_V = 200    # uncalibrated: this bright is foam whatever its neighbourhood (darker_than_local)
-    WATER_PERCENTILE = 25  # water = the darker part of the surface, even if some foam is already there at start
-
     def _water_level(self, frame: np.ndarray) -> float:
-        v = cv2.cvtColor(self.surface(frame), cv2.COLOR_BGR2HSV)[:, :, 2]
-        return float(np.percentile(v, self.WATER_PERCENTILE))
+        """Median brightness of the surface, leaving out pixels that look like white foam (bright, colourless).
+
+        Median, not a low percentile: a low percentile follows the shaded part of clean water and then the sunlit
+        part counts as foam. Leaving out white-foam pixels keeps the water level right when the tank already has
+        white foam at start-up. Dull/brown foam at start-up is not recognised: start on a calm tank.
+        """
+        hsv = cv2.cvtColor(self.surface(frame), cv2.COLOR_BGR2HSV)
+        lo, hi = PRESETS["white"]
+        water = cv2.inRange(hsv, np.array(lo, np.uint8), np.array(hi, np.uint8)) == 0
+        v = hsv[:, :, 2]
+        # almost all white: no water to measure, the darkest part is the best guess
+        return float(np.median(v[water])) if water.mean() >= 0.1 else float(np.percentile(v, 5))
+
+    def _check_shape(self, frame: np.ndarray) -> None:
+        if self._cal_shape is not None and self._cal_shape != frame.shape:
+            raise ValueError(f"foam_coverage was calibrated on a {self._cal_shape[1::-1]} frame but this frame is "
+                             f"{frame.shape[1::-1]}; calibrate again with the same camera setting")
 
     def calibrate(self, clean_frame: np.ndarray) -> float:
-        """Remember the brightness of the water surface (25th percentile of V, so a calibration frame that
-        already has up to ~3/4 foam still gives the water level). Cancels a pending ``first_frames``."""
+        """Remember the brightness of the clean water surface; later frames must have the same size.
+        Cancels a pending ``first_frames``."""
         self.water_v = self._water_level(clean_frame)
+        self._cal_shape = clean_frame.shape
         if self._cal_mode == "first_frames":
             self._cal_mode, self._cal_samples = None, []
         return self.water_v
 
     def mask(self, frame: np.ndarray) -> np.ndarray:
+        self._check_shape(frame)
         hsv = cv2.cvtColor(self.surface(frame), cv2.COLOR_BGR2HSV)
         m = np.zeros(hsv.shape[:2], np.uint8)
         for lo, hi in self.ranges:
@@ -165,8 +181,8 @@ class FoamCoverage(Analyzer):
             # locally bright, fairly colourless part of the surface
             dull = hsv[:, :, 1] <= self.local_max_saturation
             add = (rel >= self.brighter_than_local) & dull
-            if above is not None:  # calibrated: never brighter-than-neighbours water that is darker than water
-                add &= above >= self.brighter_than_water / 2
+            if above is not None:  # calibrated: must also be brighter than the water itself (not a shadow edge)
+                add &= above >= self.brighter_than_local
             add = add.astype(np.uint8) * 255
             if self.kernel is not None:
                 add = cv2.morphologyEx(add, cv2.MORPH_OPEN, self.kernel)
@@ -182,9 +198,7 @@ class FoamCoverage(Analyzer):
 
     # --- Analyzer API ----------------------------------------------------------------------------------------------
     def process(self, frame: np.ndarray, t: float) -> AnalyzerResult:
-        if self._cal_shape is not None and self._cal_shape != frame.shape:
-            raise ValueError(f"foam_coverage.calibrate image is {self._cal_shape[1::-1]} but the stream "
-                             f"is {frame.shape[1::-1]}; take the clean-tank photo with the same camera setting")
+        self._check_shape(frame)
         if self._cal_mode == "first_frames":
             self._cal_samples.append(self._water_level(frame))
             if len(self._cal_samples) < self.calibrate_frames:
