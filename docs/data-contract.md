@@ -50,6 +50,10 @@ One JSON object per line in `output/events.jsonl`, also returned by `GET /events
 | `source_offline` | a running source delivers no frame for `stale_after_s`, or a source has not delivered any frame `offline_grace_s` after start | `state`, `last_frame_age_s`, `reconnects`, `last_error` |
 | `source_recovered` | an offline source delivers frames again | same as above |
 | `source_ended` | a video file reached its end (`loop: false`) | same as above |
+| `overflow` | the overflow check zone stays changed (`on_ratio`, `confirm_frames`); at most one per `cooldown_s` ([analyzers](analyzers.md)) | `zone_id`, `changed_ratio` (0–1, share of the zone that changed), `on_ratio` |
+
+Example `overflow` result: `{"zone_id": "tray_front", "changed_ratio": 1.0, "on_ratio": 0.15}`, with
+`evidence_path` and `evidence_clip` like other alerts.
 
 Health events carry no evidence (`null`).
 
@@ -173,6 +177,31 @@ Older service versions may return `null` for this state; clients should accept b
 If inference fails, the entry is `{"status": "error", "error": "...", ...}`. Consumers must treat
 this as "unknown", not as "no detections".
 
+### Analyzer measurements
+
+When analyzers are configured ([analyzers](analyzers.md)), each observation also has `analyzers`
+(one entry per analyzer) and a flat copy `foam_coverage` (the field the dashboard reads):
+
+```json
+"analyzers": {
+  "foam_coverage": {"status": "ok", "foam_coverage_pct": 94.3, "raw_pct": 96.6,
+                    "calibrated": true, "updated_at": "2026-11-22T12:30:03.702+07:00"},
+  "overflow": {"status": "ok", "zone_id": "tray_front", "active": false, "changed_ratio": 0.0}
+},
+"foam_coverage": {"status": "ok", "foam_coverage_pct": 94.3, "raw_pct": 96.6,
+                  "calibrated": true, "updated_at": "2026-11-22T12:30:03.702+07:00"}
+```
+
+| `status` | Meaning | Show |
+|---|---|---|
+| `ok` | value is valid | `foam_coverage_pct` (smoothed, 0–100, one decimal); `raw_pct` is this frame only |
+| `calibrating` | `foam_coverage` is learning the water level after start-up; `frames_left` frames to go, no % yet | "calibrating" |
+| `learning` | `overflow` is learning the empty check zone; no `active` field yet | "learning" |
+| `error` | the analyzer failed on this frame; `error` has the message | "unknown", never 0 % |
+
+`overflow.active` is `true` while the zone is in alarm. `foam_coverage` is absent when the analyzer is
+not configured. Consumers must treat a missing value or a non-`ok` status as unknown, not as 0 %.
+
 ## Restricted zones
 
 `GET /zones` returns the effective read-only rule configuration, including defaults applied at startup:
@@ -213,7 +242,8 @@ to apply changes. It contains no camera connection credentials.
 
 `GET /metrics` and `output/metrics.json` (written on exit), one entry per source:
 `uptime_s`, `frames_received`, `frames_processed`, `frames_dropped`, `drop_rate`, `input_fps`,
-`processing_fps`, `infer_ms` and `latency_ms` (each with `p50`, `p95`, `max`), `reconnects`,
+`processing_fps`, `infer_ms` and `latency_ms` (each with `p50`, `p95`, `max`), `analyzer_ms`
+(per analyzer, same percentiles), `analyzer_errors` (count per analyzer), `reconnects`,
 `inference_errors`, `events` (count per type), `clips_written`, `clips_failed`.
 Percentiles cover the last 1000 processed frames.
 

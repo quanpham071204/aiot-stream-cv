@@ -16,6 +16,14 @@ camera / RTSP / file ──► StreamSource ──► Tracker ──────
                          source health       └──► ClipRecorder (ring buffer → clip per event)
 ```
 
+## Wastewater tank analyzers (branch `quan/analyzers`)
+
+Foam coverage (% of the tank surface, continuous) and overflow (event with evidence) run as OpenCV
+analyzers next to YOLO; set-up, configuration, accuracy and limits are in
+[docs/analyzers.md](docs/analyzers.md), the JSON fields in [docs/data-contract.md](docs/data-contract.md).
+Quick start: `python scripts/pick_roi.py --source 0 --clean calib/clean.jpg`, paste the printed YAML into
+a copy of `config.analyzers.example.yaml`, then `python run.py --config <file> --show`.
+
 ## Features
 
 - **Ingest**: webcam, RTSP/HTTP stream or video file behind one interface; capture timestamps; bounded

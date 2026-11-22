@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased – branch `quan/analyzers` (2026-11-22)
+
+### Added
+- Analyzer framework: analyzers switched on/off per source in config; failures reported as
+  `status: error`, never as 0 %. See [docs/analyzers.md](docs/analyzers.md).
+- `foam_coverage`: % of the tank surface covered by foam (perspective ROI, HSV presets white/brown/
+  grey/shadow, water-level calibration from start-up frames or a clean-tank photo, local brightness
+  filters, smoothing) in `/observations`.
+- `overflow`: change detection in a check zone outside the tank wall with hysteresis, confirmation
+  and cooldown; `overflow` events with snapshot and clip.
+- YOLO in its own thread (`model.async: true`) and `model.enabled: false`; model warm-up before the
+  stream starts (the first GPU call took 8.4 s).
+- `scripts/pick_roi.py` (pick regions on a camera frame, print YAML), `scripts/foam_eval.py` and
+  `scripts/foam_rois.json` (accuracy on the advisor's 29 photos: MAE 8.6 points).
+- `analyzer_ms` and `analyzer_errors` in metrics. 154 tests in `tests/` (this base had no tests; the 16 older
+  pipeline tests are being restored separately).
+
 ## 0.2.0 – 2026-10-22
 
 ### Added
