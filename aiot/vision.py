@@ -26,7 +26,8 @@ class Tracker:
     """One instance per source: ByteTrack state is kept inside the model (persist=True)."""
 
     def __init__(self, weights: str = "yolov8n.pt", classes: Optional[list[int]] = None,
-                 conf: float = 0.35, imgsz: int = 640, device=None, tracker_cfg: str = "bytetrack.yaml"):
+                 conf: float = 0.35, imgsz: int = 640, device=None, tracker_cfg: str = "bytetrack.yaml",
+                 warmup: bool = True):
         from ultralytics import YOLO
 
         self.model = YOLO(weights)
@@ -35,6 +36,11 @@ class Tracker:
         self.imgsz = imgsz
         self.device = device
         self.tracker_cfg = tracker_cfg
+        if warmup:
+            # The first inference loads CUDA kernels / allocates buffers (measured 8.4 s on the
+            # team laptop's GPU). Pay it here, before the stream starts, instead of on the first
+            # frames (sync mode dropped ~200 frames). predict() leaves the ByteTrack state untouched.
+            self.model.predict(np.zeros((imgsz, imgsz, 3), np.uint8), imgsz=imgsz, device=device, verbose=False)
 
     def update(self, frame: np.ndarray) -> list[Track]:
         r = self.model.track(frame, persist=True, tracker=self.tracker_cfg, classes=self.classes,
