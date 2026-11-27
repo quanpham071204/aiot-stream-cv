@@ -49,7 +49,8 @@ def build(cfg: dict) -> tuple[dict[str, SourcePipeline], EventStore]:
             if m.get("async", False):  # slow model in its own thread; OpenCV analyzers keep full rate
                 tracker = AsyncTracker(tracker)
         rules = [ZoneIntrusionRule(z["id"], z["polygon"], z.get("min_dwell_s", 1.0),
-                                   z.get("lost_timeout_s", 2.0), z.get("classes"))
+                                   z.get("lost_timeout_s", 2.0), z.get("classes"),
+                                   z.get("event_type", "zone_intrusion"))
                  for z in s.get("zones", [])]
         clips = None
         if ev.get("clip", True):

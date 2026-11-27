@@ -4,6 +4,17 @@
 sources:
   - id: tank01
     uri: "0"                    # USB webcam; or a video file / rtsp:// URL
+    zones:
+      # foreign objects: anything the model detects on the tank surface for min_dwell_s -> one foreign_object
+      # event per object (snapshot + clip). Same corners as foam_coverage.roi is fine.
+      - id: tank_surface
+        event_type: foreign_object
+        polygon: [[120, 80], [520, 80], [560, 400], [80, 400]]
+        min_dwell_s: 1.0
+        lost_timeout_s: 2.0
+        # the team's model (Dat): its foreign-object class names. With the stock yolov8n.pt (COCO) use objects
+        # that float, e.g. [bottle, cup, sports ball, frisbee, handbag, backpack, umbrella]; null = every class
+        classes: [bottle, cup, sports ball, frisbee, handbag, backpack, umbrella]
     analyzers:
       foam_coverage:
         enabled: true

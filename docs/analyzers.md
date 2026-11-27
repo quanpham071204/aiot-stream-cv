@@ -8,8 +8,11 @@ Branch `quan/analyzers`. Two OpenCV analyzers run on every processed frame, next
 | `foam_coverage` | % of the tank surface covered by foam, every frame (`/observations`) | none in phase 1 |
 | `overflow` | changed ratio of a check zone outside the tank wall | one `overflow` event per spill, with snapshot + clip |
 
-Foreign objects use the existing YOLO path (`zone_intrusion` events, `tracks` in observations); the
-team's own model plugs in through `model.weights`. With `model.async: true` YOLO runs in its own
+Foreign objects use the YOLO + ByteTrack path with a zone over the tank surface configured as
+`event_type: foreign_object`: one `foreign_object` event per object that stays on the surface for
+`min_dwell_s` (snapshot + clip). The team's own model plugs in through `model.weights` and its class names
+go in the zone's `classes`; until then the stock COCO `yolov8n.pt` with floating classes (bottle, cup,
+ball, bag ...) stands in. With `model.async: true` YOLO runs in its own
 thread, so a slow model never slows down the two analyzers.
 
 The JSON fields are listed in [data-contract.md](data-contract.md) (sections *Observation*, *Event
@@ -86,9 +89,12 @@ follows slow lighting drift only on unchanged pixels, so a slowly creeping spill
 - Pexels drone videos (moving camera, not a fair test): tank without foam 2 %, aeration tank 29 %
   (by eye ~30 %).
 - Synthetic demo video: one `overflow` event per spill, evidence image + clip.
-- 154 tests (`pytest -q`), including three rounds of cross-tests by other AIs.
+- 158 tests (`pytest -q`), including three rounds of cross-tests by other AIs.
 
-Not verified yet: a real webcam on the demo tank; the foreign-object model.
+- `foreign_object` with the stock YOLO on the sample video (person as stand-in class): 12 events, one per
+  person entering the zone, snapshot + clip, `/zones` and CSV export show the type.
+
+Not verified yet: a real webcam on the demo tank; the team's foreign-object model.
 
 ## Known limits
 

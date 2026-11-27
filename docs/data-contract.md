@@ -47,6 +47,7 @@ One JSON object per line in `output/events.jsonl`, also returned by `GET /events
 | `event_type` | When | `result` |
 |---|---|---|
 | `zone_intrusion` | a tracked object stays inside a zone for `min_dwell_s`; fires once per visit | `zone_id`, `track_id`, `class`, `confidence`, `dwell_s`, `bbox` (x1, y1, x2, y2 in pixels) |
+| `foreign_object` | same rule on a zone configured with `event_type: foreign_object` (the tank surface): a detected object of the zone's `classes` stays on it for `min_dwell_s`; once per object visit | same as `zone_intrusion` |
 | `source_offline` | a running source delivers no frame for `stale_after_s`, or a source has not delivered any frame `offline_grace_s` after start | `state`, `last_frame_age_s`, `reconnects`, `last_error` |
 | `source_recovered` | an offline source delivers frames again | same as above |
 | `source_ended` | a video file reached its end (`loop: false`) | same as above |
@@ -215,6 +216,7 @@ not configured. Consumers must treat a missing value or a non-`ok` status as unk
       "zones": [
         {
           "zone_id": "restricted_a",
+          "event_type": "zone_intrusion",
           "polygon": [[380, 215], [560, 215], [580, 330], [360, 330]],
           "min_dwell_s": 1.0,
           "lost_timeout_s": 2.0,
@@ -227,6 +229,7 @@ not configured. Consumers must treat a missing value or a non-`ok` status as unk
 ```
 
 Every configured source is included, even offline sources and sources with `zones: []`.
+`event_type` is the event the zone raises: `zone_intrusion` (default) or `foreign_object`.
 Polygon coordinates are pixels in the original frame. `classes: null` means all tracked classes.
 `min_dwell_s` is the time inside a zone before an intrusion event; `lost_timeout_s` is the grace
 period outside/unseen before a visit is considered ended. Merely being in a zone is not evidence

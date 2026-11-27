@@ -14,7 +14,9 @@
   stream starts (the first GPU call took 8.4 s).
 - `scripts/pick_roi.py` (pick regions on a camera frame, print YAML), `scripts/foam_eval.py` and
   `scripts/foam_rois.json` (accuracy on the advisor's 29 photos: MAE 8.6 points).
-- `analyzer_ms` and `analyzer_errors` in metrics. 154 tests in `tests/` (this base had no tests; the 16 older
+- `foreign_object` events: zones take `event_type: foreign_object` (default `zone_intrusion`); `/zones`
+  shows it. Example config has a tank-surface zone.
+- `analyzer_ms` and `analyzer_errors` in metrics. 158 tests in `tests/` (this base had no tests; the 16 older
   pipeline tests are being restored separately).
 
 ## 0.2.0 – 2026-10-22

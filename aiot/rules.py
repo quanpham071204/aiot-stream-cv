@@ -18,17 +18,28 @@ def point_in_polygon(pt: tuple[float, float], poly: list) -> bool:
     return inside
 
 
+EVENT_TYPES = ("zone_intrusion", "foreign_object")
+
+
 class ZoneIntrusionRule:
     """Fire once when a tracked object stays inside a zone for min_dwell_s.
 
     A track counts as having left only after it has been outside (or unseen)
     for lost_timeout_s, so detector jitter at the border does not re-fire.
+
+    ``event_type`` names what the zone means: ``zone_intrusion`` (a person in a restricted area,
+    the default) or ``foreign_object`` (an object detected on the tank surface; the zone is the tank
+    and ``classes`` are the foreign-object classes of the model). The logic and payload are the same.
     """
 
-    event_type = "zone_intrusion"
-
     def __init__(self, zone_id: str, polygon: list, min_dwell_s: float = 1.0,
-                 lost_timeout_s: float = 2.0, classes: Optional[Iterable[str]] = None):
+                 lost_timeout_s: float = 2.0, classes: Optional[Iterable[str]] = None,
+                 event_type: str = "zone_intrusion"):
+        if event_type not in EVENT_TYPES:
+            raise ValueError(f"zone {zone_id!r}: event_type must be one of {list(EVENT_TYPES)}, got {event_type!r}")
+        if polygon is None or len(polygon) < 3:
+            raise ValueError(f"zone {zone_id!r}: polygon needs at least 3 points")
+        self.event_type = event_type
         self.zone_id = zone_id
         self.polygon = polygon
         self.min_dwell_s = min_dwell_s

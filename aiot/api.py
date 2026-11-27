@@ -105,7 +105,7 @@ def make_server(host: str, port: int, pipelines: dict[str, SourcePipeline], stor
             if path == "/zones":
                 return self._json({"time": iso(time.time()), "sources": [
                     {"source_id": sid, "zones": [
-                        {"zone_id": rule.zone_id, "polygon": rule.polygon,
+                        {"zone_id": rule.zone_id, "event_type": rule.event_type, "polygon": rule.polygon,
                          "min_dwell_s": rule.min_dwell_s, "lost_timeout_s": rule.lost_timeout_s,
                          "classes": sorted(rule.classes) if rule.classes is not None else None}
                         for rule in p.rules]}
