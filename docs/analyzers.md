@@ -91,8 +91,10 @@ follows slow lighting drift only on unchanged pixels, so a slowly creeping spill
 - Synthetic demo video: one `overflow` event per spill, evidence image + clip.
 - 158 tests (`pytest -q`), including three rounds of cross-tests by other AIs.
 
-- `foreign_object` with the stock YOLO on the sample video (person as stand-in class): 12 events, one per
-  person entering the zone, snapshot + clip, `/zones` and CSV export show the type.
+- `foreign_object` with the stock YOLO on the sample video (person as stand-in class): 19 events in 35 s
+  (16 tracks), each with snapshot + clip; `/zones` and CSV export show the type. A track that leaves the
+  zone for more than `lost_timeout_s` and comes back fires again (one track fired 3 times), and ByteTrack
+  can give a new ID to the same person after an occlusion, so the count is per visit, not per object.
 
 Not verified yet: a real webcam on the demo tank; the team's foreign-object model.
 
